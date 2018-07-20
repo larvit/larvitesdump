@@ -1,0 +1,19 @@
+{
+  "name": "larvitesdump",
+  "version": "0.1.0",
+  "description": "Dump data from and to Elasticsearch - faster!",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": {
+    "name": "Mikael 'Lilleman' Göransson",
+    "email": "lilleman@larvit.se",
+    "url": "http://github.com/larvit/larvitesdump"
+  },
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/larvit/larvitesdump.git"
+  }
+}
