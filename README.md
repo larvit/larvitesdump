@@ -2,18 +2,16 @@
 
 Dump data to and from elasticsearch
 
-## Installing
+## Installation
 
 (local)
 ```bash
 npm i larvitesdump
-./esdump
 ```
 
 (global)
 ```bash
 npm i larvitesdump -g
-esdump
 ```
 
 ## Use
@@ -30,7 +28,7 @@ esdump
 
 This will assume an elasticsearch server is running on 127.0.0.1 on port 9200 and it will output two files named "esdump_structure.ndjson" and esdump_data.ndjson in the current directory, containing all indices and all types.
 
-#### Change options
+#### Parameters
 
 ```bash
 esdump -h 127.0.0.1 -P 9200 -o esdump.ndjson indice_name type_name1 type_name2 ...
