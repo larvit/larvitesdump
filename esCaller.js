@@ -37,6 +37,7 @@ function callEs(scrollId) {
 		}
 
 		if (body.endsWith('"hits":[]}}')) {
+			sendToNextProc('EOF');
 			sendToEsdump('EOF');
 			return;
 		}
@@ -85,7 +86,16 @@ ipc.config.id	= argv['ipc.config.id'] + '_' + argv['esCallerProcNr'];
 ipc.config.retry	= 1500;
 ipc.config.silent	= true;
 ipc.serve(function () {
-	ipc.server.on('esCaller', callEs);
+	ipc.server.on('esCaller', function (msg) {
+		if (msg === 'EOF') {
+			sendToNextProc('EOF');
+			setTimeout(function () {
+				process.exit();
+			}, 200);
+		} else {
+			callEs(msg);
+		}
+	});
 });
 ipc.server.start();
 
