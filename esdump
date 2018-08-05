@@ -5,6 +5,7 @@ const	uuidLib	= require('uuid/v4'),
 	processUuid	= uuidLib(),
 	spawn	= require('child_process').spawn,
 	argv	= require('minimist')(process.argv.slice(2)),
+	cpus	= require('os').cpus(),
 	ipc	= require('node-ipc');
 
 let	indexName	= argv._[0] || false,
@@ -14,17 +15,58 @@ let	indexName	= argv._[0] || false,
 	esPort	= argv.P || '9200',
 	esUrl	= esProt + '://' + esHost + ':' + esPort + '/';
 
+// Start IPC (Inter Process Communication) server
 ipc.config.id	= 'esdump_' + processUuid;
+ipc.config.retry	= 1500;
 ipc.config.silent	= true;
-
 ipc.serve(function () {
-	spawn('node', [__dirname + '/esCaller.js',	ipc.config.id, esUrl, indexName, typeName]);
-	//spawn('node', [__dirname + '/processEsCall.js',	ipc.config.id]);
-
-	ipc.server.on('message', function (data, socket) {
-		ipc.server.emit(socket, 'message', data + ' world!');
+	ipc.server.on('esdump', function (message) {
+		if (message.endsWith('EOF_ERROR')) {
+			throw new Error('Child error');
+		} else if (message.endsWith('EOF')) {
+			process.exit();
+		} else {
+			process.stdout.write(message.substring(20));
+		}
 	});
 });
-
 ipc.server.start();
-//ipc.server.stop();
+
+// Start worker childs (esCaller.js), one for each cpu core
+for (let i = 0; cpus[i] !== undefined; i ++) {
+	const	esCallerOpts	= {},
+		procNr	= i;
+
+	let	childProc;
+
+	esCallerOpts['ipc.config.id']	= ipc.config.id;
+	esCallerOpts['esUrl']	= esUrl;
+	esCallerOpts['indexName']	= indexName;
+	esCallerOpts['typeName']	= typeName;
+	esCallerOpts['esCallerProcNr']	= procNr;
+	esCallerOpts['esCallerProcAmount']	= cpus.length;
+	childProc	= spawn('node', [__dirname + '/esCaller.js', JSON.stringify(esCallerOpts)]);
+
+	childProc.stdout.on('data', function (data) {
+		console.log('procNr ' + procNr + ' data: ' + data);
+		process.exit(1);
+	});
+
+	childProc.stderr.on('data', function (data) {
+		console.log('procNr ' + procNr + ' err: ' + data);
+		process.exit(1);
+	});
+
+	childProc.on('close', function () {
+		console.log('procNr ' + procNr + ' dieded');
+		process.exit(1);
+	});
+}
+
+// Tell first worker to call ES
+ipc.connectTo(ipc.config.id + '_0', function () {
+	const	ipcCon	= ipc.of[ipc.config.id + '_0'];
+	ipcCon.on('connect', function () {
+		ipcCon.emit('esCaller', '0'); // A single "0" means no scroll id have been obtained, so start with getting that.
+	});
+});

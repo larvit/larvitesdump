@@ -39,5 +39,4 @@ esdump -h 127.0.0.1 -P 9200 -o esdump.ndjson indice_name type_name1 type_name2 .
 esdump consists of several processes to make it as fast as possible
 
 * esdump - controls the other processes and sends data to stdout in the correct order
-* esCaller - calls es initially and starts new calls via processEsCall
-* processEsCall - sends an http call to ES, tells esCaller it got a reply, then parses and modifies the content and passing it back to esdump main process
+* esCaller - calls es and process the answers. Directly when es answers a call is made to the main process to start the next call.
