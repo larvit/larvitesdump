@@ -18,7 +18,7 @@ function sendToEs() {
 
 	reqOptions.url	= esUrl + indexName + '/' + typeName;
 	reqOptions.method	= 'POST';
-	reqOptions.headers	= {'content-type': 'application/json'};
+	reqOptions.headers	= {'Content-Type': 'application/x-ndjson'};
 
 	reqObj	= request(reqOptions);
 

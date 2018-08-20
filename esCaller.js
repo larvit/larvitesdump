@@ -1,12 +1,10 @@
 'use strict';
 
 const	request	= require('requestretry'),
-	argv	= JSON.parse(process.argv[2]),
-	ipc	= require('node-ipc');
+	http	= require('http'),
+	argv	= JSON.parse(process.argv[2]);
 
-let	nextProcNr,
-	ipcNextProc,
-	ipcEsdump;
+let	httpServer;
 
 function callEs(scrollId) {
 	const	reqOptions	 = {};
@@ -26,9 +24,17 @@ function callEs(scrollId) {
 
 	request(reqOptions, function (err, response, body) {
 		if (err) {
-			sendToEsdump(err.message);
+			sendToEsdump(err.message + '\n');
+			sendToEsdump(err.stack + '\n');
 			sendToEsdump('EOF_ERROR');
 			throw err;
+		}
+
+		if (response.statusCode !== 200) {
+			sendToEsdump('Non 200 answer from ES: ' + response.statusCode + '\n');
+			sendToEsdump('ES body: ' + body + '\n');
+			sendToEsdump('EOF_ERROR');
+			return;
 		}
 
 		if (scrollId === '0') {
@@ -37,13 +43,13 @@ function callEs(scrollId) {
 		}
 
 		if (body.endsWith('"hits":[]}}')) {
-			sendToNextProc('EOF');
 			sendToEsdump('EOF');
 			return;
 		}
 
-		sendToNextProc(scrollId);
-		sendToEsdump(reformatBody(body));
+		sendToNextProc(scrollId, function () {
+			reformatBody(body);
+		});
 	});
 }
 
@@ -52,6 +58,14 @@ function reformatBody(body) {
 
 	let	result	= '';
 
+	if ( ! parsedBody || ! parsedBody.hits || ! Array.isArray(parsedBody.hits.hits)) {
+		const	err	= new Error('Invalid body from ES call');
+		sendToEsdump(err.message + ':');
+		sendToEsdump(body);
+		sendToEsdump('EOF_ERROR');
+		throw err;
+	}
+
 	for (let i = 0; parsedBody.hits.hits[i] !== undefined; i ++) {
 		const	hit	= parsedBody.hits.hits[i];
 
@@ -59,61 +73,59 @@ function reformatBody(body) {
 		result += JSON.stringify(hit._source) + '\n';
 	}
 
-	return result;
+	sendToEsdump(result);
 }
 
-function sendToEsdump(msg) {
-	if ( ! ipcEsdump) {
-		return setTimeout(function () {
-			sendToEsdump(msg);
-		}, 10);
-	}
-
-	ipcEsdump.emit('esdump', 'esCaller_' + String(argv.esCallerProcNr).padStart(10, '0') + ':' + msg);
+function sendToEsdump(msg, cb) {
+	request({
+		'url':	'http://127.0.0.1:27000',
+		'method':	'POST',
+		'body':	msg,
+		'maxAttempts':	100,
+		'retryDelay':	50
+	}, function (err) {
+		if (err) {
+			console.error('Error when calling sendToEsdump():');
+			throw err;
+		}
+		if (typeof cb === 'function') cb(err);
+	});
 }
 
-function sendToNextProc(msg) {
-	if ( ! ipcNextProc) {
-		return setTimeout(function () {
-			sendToNextProc(msg);
-		}, 10);
-	}
-	ipcNextProc.emit('esCaller', msg);
+function sendToNextProc(msg, cb) {
+	request.post({
+		'url':	'http://127.0.0.1:' + argv.nextEsCallerPort,
+		'method':	'POST',
+		'body':	msg,
+		'maxAttempts':	100,
+		'retryDelay':	50
+	}, function (err) {
+		if (err) {
+			console.error('Error when calling sendToNextproc():');
+			throw err;
+		}
+		if (typeof cb === 'function') cb(err);
+	});
 }
 
-// Start IPC sever on this worker
-ipc.config.id	= argv['ipc.config.id'] + '_' + argv['esCallerProcNr'];
-ipc.config.retry	= 1500;
-ipc.config.silent	= true;
-ipc.serve(function () {
-	ipc.server.on('esCaller', function (msg) {
-		if (msg === 'EOF') {
-			sendToNextProc('EOF');
-			setTimeout(function () {
-				process.exit();
-			}, 200);
+// Start http server
+httpServer = http.createServer(function (req, res) {
+	req.on('data', function (chunk) {
+		if (chunk.length === 3 && chunk.toString() === 'EOF') {
+			process.exit();
 		} else {
-			callEs(msg);
+			callEs(chunk.toString());
 		}
 	});
-});
-ipc.server.start();
 
-// Connect to server
-ipc.connectTo(argv['ipc.config.id'], function () {
-	ipc.of[argv['ipc.config.id']].on('connect', function () {
-		ipcEsdump	= ipc.of[argv['ipc.config.id']];
+	req.on('end', function () {
+		res.writeHead(200, { 'Content-Type': 'text/plain' });
+		res.end('ok');
 	});
 });
+httpServer.listen(27000 + Number(argv.esCallerProcNr) + 1);
 
-// Connect to next process in queue
-if (argv.esCallerProcNr === argv.esCallerProcAmount - 1) {
-	nextProcNr	= 0;
-} else {
-	nextProcNr	= argv.esCallerProcNr + 1;
+// Initial call to ES
+if (Number(argv.esCallerProcNr) === 0) {
+	callEs('0');
 }
-ipc.connectTo(argv['ipc.config.id'] + '_' + nextProcNr, function () {
-	ipc.of[argv['ipc.config.id'] + '_' + nextProcNr].on('connect', function () {
-		ipcNextProc	= ipc.of[argv['ipc.config.id'] + '_' + nextProcNr];
-	});
-});

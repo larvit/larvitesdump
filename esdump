@@ -1,72 +1,83 @@
 #!/usr/bin/env node
 'use strict';
 
-const	uuidLib	= require('uuid/v4'),
-	processUuid	= uuidLib(),
+const	childProcs	= [],
 	spawn	= require('child_process').spawn,
 	argv	= require('minimist')(process.argv.slice(2)),
-	cpus	= require('os').cpus(),
-	ipc	= require('node-ipc');
+	prcs	= require('os').cpus().length,
+	http	= require('http');
 
 let	indexName	= argv._[0] || false,
 	typeName	= argv._[1] || false,
 	esProt	= argv.protocoll	|| 'http',
 	esHost	= argv.h || '127.0.0.1',
 	esPort	= argv.P || '9200',
-	esUrl	= esProt + '://' + esHost + ':' + esPort + '/';
+	esUrl	= esProt + '://' + esHost + ':' + esPort + '/',
+	esdumpServer;
 
-// Start IPC (Inter Process Communication) server
-ipc.config.id	= 'esdump_' + processUuid;
-ipc.config.retry	= 1500;
-ipc.config.silent	= true;
-ipc.serve(function () {
-	ipc.server.on('esdump', function (message) {
-		if (message.endsWith('EOF_ERROR')) {
-			throw new Error('Child error');
-		} else if (message.endsWith('EOF')) {
-			process.exit();
+function killAll() {
+	setTimeout(function () {
+		for (let i = 0; childProcs[i] !== undefined; i ++) {
+			childProcs[i].kill();
+		}
+		process.exit();
+	}, 500);
+}
+
+// Start esdump http server
+esdumpServer = http.createServer(function (req, res) {
+	req.on('data', function (chunk) {
+		if (chunk.length === 3 && chunk.toString() === 'EOF') {
+			killAll();
+		} else if (chunk.length === 9 && chunk.toString() === 'EOF_ERROR') {
+			console.error('Child error');
+			process.exit(1);
 		} else {
-			process.stdout.write(message.substring(20));
+			process.stdout.write(chunk);
 		}
 	});
-});
-ipc.server.start();
 
-// Start worker childs (esCaller.js), one for each cpu core
-for (let i = 0; cpus[i] !== undefined; i ++) {
+	req.on('end', function () {
+		res.writeHead(200, { 'Content-Type': 'text/plain' });
+		res.end('ok');
+	});
+});
+esdumpServer.listen(27000);
+
+// Start worker childs (esCaller.js)
+for (let i = 0; prcs >= i; i ++) {
 	const	esCallerOpts	= {},
 		procNr	= i;
 
 	let	childProc;
 
-	esCallerOpts['ipc.config.id']	= ipc.config.id;
 	esCallerOpts['esUrl']	= esUrl;
 	esCallerOpts['indexName']	= indexName;
 	esCallerOpts['typeName']	= typeName;
 	esCallerOpts['esCallerProcNr']	= procNr;
-	esCallerOpts['esCallerProcAmount']	= cpus.length;
+	esCallerOpts['nextEsCallerPort']	= 27002 + i;
+	esCallerOpts['esCallerProcAmount']	= prcs;
+
+	if (i >= prcs) {
+		esCallerOpts['nextEsCallerPort']	= 27001;
+	}
+
 	childProc	= spawn('node', [__dirname + '/esCaller.js', JSON.stringify(esCallerOpts)]);
 
 	childProc.stdout.on('data', function (data) {
 		console.log('procNr ' + procNr + ' data: ' + data);
-		process.exit(1);
+		killAll();
 	});
 
 	childProc.stderr.on('data', function (data) {
 		console.log('procNr ' + procNr + ' err: ' + data);
-		process.exit(1);
+		killAll();
 	});
 
 	childProc.on('close', function () {
-		console.log('procNr ' + procNr + ' dieded');
-		process.exit(1);
+		console.log('procNr ' + procNr + ' dieded! I lovded you process, I lovded you so!');
+		killAll();
 	});
-}
 
-// Tell first worker to call ES
-ipc.connectTo(ipc.config.id + '_0', function () {
-	const	ipcCon	= ipc.of[ipc.config.id + '_0'];
-	ipcCon.on('connect', function () {
-		ipcCon.emit('esCaller', '0'); // A single "0" means no scroll id have been obtained, so start with getting that.
-	});
-});
+	childProcs.push(childProc);
+}
